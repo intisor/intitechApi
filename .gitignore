@@ -39,6 +39,16 @@ ScaffoldingReadMe.txt
 # dotenv environment variables file
 .env
 
+# Visual Studio
+.vs/
+.vscode/
+*.user
+launchSettings.json
+
+# User secrets and local config
+appsettings.Development.json
+secrets.json
+
 # Others
 ~$*
 *~
@@ -55,3 +65,4 @@ CodeCoverage/
 *.VisualState.xml
 TestResult.xml
 nunit-*.xml
+
