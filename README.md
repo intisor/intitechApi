@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # api.intitech.dev
 
 Backend API powering [intitech.dev](https://intitech.dev). Aggregates live data from GitHub and other sources.
@@ -124,3 +125,4 @@ After deploying, map `api.intitech.dev` to your Azure App Service via:
 - [ ] Chrome Web Store install counts (AI Capture)
 - [ ] Substack subscriber count
 - [ ] Notion-backed project status
+
