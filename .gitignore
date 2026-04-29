@@ -1,0 +1,17 @@
+## .NET / ASP.NET Core
+obj/
+bin/
+publish/
+*.user
+.vs/
+.vscode/
+launchSettings.json
+
+## Secrets — NEVER commit these
+appsettings.Development.json
+secrets.json
+.env
+
+## OS
+.DS_Store
+Thumbs.db
