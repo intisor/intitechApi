@@ -4,7 +4,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Services
 builder.Services.AddMemoryCache();
-builder.Services.AddHttpClient<GitHubService>();
+builder.Services.AddSingleton<GitHubService>();
 builder.Services.AddOpenApi();
 
 // CORS — only allow portfolio origin
@@ -31,6 +31,12 @@ app.UseCors("PortfolioOnly");
 if (app.Environment.IsDevelopment())
     app.MapOpenApi();
 
+app.MapGet("/", () => Results.Ok(new
+{
+    message = "Welcome to IntitechApi. Visit /github/summary for GitHub data.",
+    timestamp = DateTime.UtcNow
+}));
+
 // ── Health ────────────────────────────────────────────────────────────────────
 app.MapGet("/health", () => Results.Ok(new
 {
@@ -51,6 +57,102 @@ app.MapGet("/github/summary", async (GitHubService github) =>
     {
         return Results.Problem(
             title: "Failed to fetch GitHub data",
+            detail: ex.Message,
+            statusCode: 502);
+    }
+});
+
+app.MapGet("/github/profile", async (GitHubService github) =>
+{
+    try
+    {
+        var profile = await github.GetProfileAsync();
+        return Results.Ok(profile);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(
+            title: "Failed to fetch GitHub profile",
+            detail: ex.Message,
+            statusCode: 502);
+    }
+});
+
+app.MapGet("/github/repos", async (GitHubService github) =>
+{
+    try
+    {
+        var repos = await github.GetReposAsync();
+        return Results.Ok(repos);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(
+            title: "Failed to fetch GitHub repositories",
+            detail: ex.Message,
+            statusCode: 502);
+    }
+});
+
+app.MapGet("/github/repos/top", async (GitHubService github, int count = 6) =>
+{
+    try
+    {
+        var repos = await github.GetTopReposAsync(count);
+        return Results.Ok(repos);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(
+            title: "Failed to fetch top GitHub repositories",
+            detail: ex.Message,
+            statusCode: 502);
+    }
+});
+
+app.MapGet("/github/repo/{repoName}", async (GitHubService github, string repoName) =>
+{
+    try
+    {
+        var repo = await github.GetRepoAsync(repoName);
+        return repo is not null ? Results.Ok(repo) : Results.NotFound(new { message = "Repository not found." });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(
+            title: "Failed to fetch repository details",
+            detail: ex.Message,
+            statusCode: 502);
+    }
+});
+
+app.MapGet("/github/activity", async (GitHubService github) =>
+{
+    try
+    {
+        var activity = await github.GetActivityAsync();
+        return Results.Ok(activity);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(
+            title: "Failed to fetch GitHub activity",
+            detail: ex.Message,
+            statusCode: 502);
+    }
+});
+
+app.MapGet("/github/languages", async (GitHubService github) =>
+{
+    try
+    {
+        var languages = await github.GetLanguageBreakdownAsync();
+        return Results.Ok(languages);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(
+            title: "Failed to fetch GitHub language data",
             detail: ex.Message,
             statusCode: 502);
     }

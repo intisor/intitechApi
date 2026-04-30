@@ -1,44 +1,39 @@
-using System.Net.Http.Headers;
-using System.Text.Json;
 using IntitechApi.Cache;
 using IntitechApi.Models;
 using Microsoft.Extensions.Caching.Memory;
+using Octokit;
 
 namespace IntitechApi.Services;
 
-public class GitHubService(
-    HttpClient httpClient,
-    IMemoryCache cache,
-    IConfiguration config,
-    ILogger<GitHubService> logger)
+public class GitHubService
 {
-    private readonly string _username = config["GitHub:Username"] ?? "intitech";
-    private readonly string? _token = config["GitHub:Token"];
+    private readonly GitHubClient _client;
+    private readonly IMemoryCache _cache;
+    private readonly ILogger<GitHubService> _logger;
+    private readonly string _username;
 
-    private void SetAuthHeaders()
+    public GitHubService(IMemoryCache cache, IConfiguration config, ILogger<GitHubService> logger)
     {
-        httpClient.DefaultRequestHeaders.UserAgent.Clear();
-        httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("IntitechApi/1.0");
-        httpClient.DefaultRequestHeaders.Accept.Clear();
-        httpClient.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
+        _cache = cache;
+        _logger = logger;
+        _username = config["GitHub:Username"] ?? "intisor";
+        _client = new GitHubClient(new ProductHeaderValue("IntitechApi", "1.0"));
 
-        if (!string.IsNullOrEmpty(_token))
+        var token = config["GitHub:Token"];
+        if (!string.IsNullOrWhiteSpace(token))
         {
-            httpClient.DefaultRequestHeaders.Authorization =
-                new AuthenticationHeaderValue("Bearer", _token);
+            _client.Credentials = new Credentials(token);
         }
     }
 
     public async Task<GitHubSummary> GetSummaryAsync()
     {
-        if (cache.TryGetValue(CacheKeys.GitHubSummary, out GitHubSummary? cached) && cached is not null)
+        if (_cache.TryGetValue(CacheKeys.GitHubSummary, out GitHubSummary? cached) && cached is not null)
             return cached;
-
-        SetAuthHeaders();
 
         var profile = await FetchProfileAsync();
         var repos = await FetchReposAsync();
-        var activity = await ComputeActivityAsync(repos);
+        var activity = await ComputeActivityAsync();
         var languages = await FetchLanguagesAsync(repos);
 
         var topRepos = repos
@@ -50,178 +45,204 @@ public class GitHubService(
 
         var summary = new GitHubSummary(profile, topRepos, activity, languages, DateTime.UtcNow);
 
-        cache.Set(CacheKeys.GitHubSummary, summary, CacheTTL.GitHub);
-
+        _cache.Set(CacheKeys.GitHubSummary, summary, CacheTTL.GitHub);
         return summary;
     }
 
+    public Task<GitHubProfile> GetProfileAsync() => FetchProfileAsync();
+
+    public Task<List<GitHubRepo>> GetReposAsync() => FetchReposAsync();
+
+    public async Task<List<GitHubRepo>> GetTopReposAsync(int take = 6)
+    {
+        var repos = await FetchReposAsync();
+        return repos
+            .Where(r => !r.IsForked)
+            .OrderByDescending(r => r.Stars)
+            .ThenByDescending(r => r.UpdatedAt)
+            .Take(take)
+            .ToList();
+    }
+
+    public async Task<GitHubRepo?> GetRepoAsync(string repoName)
+    {
+        try
+        {
+            var repo = await _client.Repository.Get(_username, repoName);
+            return await CreateRepoModelAsync(repo);
+        }
+        catch (NotFoundException)
+        {
+            return null;
+        }
+    }
+
+    public Task<GitHubActivity> GetActivityAsync() => ComputeActivityAsync();
+
+    public async Task<LanguageBreakdown> GetLanguageBreakdownAsync() => await FetchLanguagesAsync(await FetchReposAsync());
+
     private async Task<GitHubProfile> FetchProfileAsync()
     {
-        var response = await httpClient.GetAsync($"https://api.github.com/users/{_username}");
-        response.EnsureSuccessStatusCode();
-
-        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-        var root = doc.RootElement;
+        var user = await _client.User.Get(_username);
 
         return new GitHubProfile(
-            Username: root.GetProperty("login").GetString()!,
-            DisplayName: root.TryGetProperty("name", out var name) ? name.GetString() ?? _username : _username,
-            Bio: root.TryGetProperty("bio", out var bio) ? bio.GetString() ?? "" : "",
-            AvatarUrl: root.GetProperty("avatar_url").GetString()!,
-            PublicRepos: root.GetProperty("public_repos").GetInt32(),
-            Followers: root.GetProperty("followers").GetInt32(),
-            Following: root.GetProperty("following").GetInt32(),
-            ProfileUrl: root.GetProperty("html_url").GetString()!
+            Username: user.Login,
+            DisplayName: user.Name ?? _username,
+            Bio: user.Bio ?? string.Empty,
+            AvatarUrl: user.AvatarUrl,
+            PublicRepos: user.PublicRepos,
+            Followers: user.Followers,
+            Following: user.Following,
+            ProfileUrl: user.HtmlUrl
         );
     }
 
     private async Task<List<GitHubRepo>> FetchReposAsync()
     {
-        if (cache.TryGetValue(CacheKeys.GitHubRepos, out List<GitHubRepo>? cachedRepos) && cachedRepos is not null)
+        if (_cache.TryGetValue(CacheKeys.GitHubRepos, out List<GitHubRepo>? cachedRepos) && cachedRepos is not null)
             return cachedRepos;
 
-        var repos = new List<GitHubRepo>();
-        int page = 1;
-
-        while (true)
+        var octokitRepos = await _client.Repository.GetAllForUser(_username, new ApiOptions
         {
-            var response = await httpClient.GetAsync(
-                $"https://api.github.com/users/{_username}/repos?per_page=100&page={page}&sort=updated");
+            PageSize = 100,
+            PageCount = 10,
+            StartPage = 1
+        });
 
-            response.EnsureSuccessStatusCode();
-            var json = await response.Content.ReadAsStringAsync();
-            using var doc = JsonDocument.Parse(json);
-            var arr = doc.RootElement;
+        var repos = new List<GitHubRepo>(octokitRepos.Count);
 
-            if (arr.GetArrayLength() == 0) break;
-
-            foreach (var repo in arr.EnumerateArray())
-            {
-                var topics = new List<string>();
-                if (repo.TryGetProperty("topics", out var topicsEl))
-                    foreach (var t in topicsEl.EnumerateArray())
-                        topics.Add(t.GetString()!);
-
-                repos.Add(new GitHubRepo(
-                    Name: repo.GetProperty("name").GetString()!,
-                    Description: repo.TryGetProperty("description", out var desc) ? desc.GetString() : null,
-                    Url: repo.GetProperty("html_url").GetString()!,
-                    Language: repo.TryGetProperty("language", out var lang) ? lang.GetString() : null,
-                    Stars: repo.GetProperty("stargazers_count").GetInt32(),
-                    Forks: repo.GetProperty("forks_count").GetInt32(),
-                    IsForked: repo.GetProperty("fork").GetBoolean(),
-                    UpdatedAt: repo.GetProperty("updated_at").GetDateTime(),
-                    Topics: topics
-                ));
-            }
-
-            if (arr.GetArrayLength() < 100) break;
-            page++;
+        foreach (var repo in octokitRepos)
+        {
+            repos.Add(await CreateRepoModelAsync(repo));
         }
 
-        cache.Set(CacheKeys.GitHubRepos, repos, CacheTTL.GitHub);
+        _cache.Set(CacheKeys.GitHubRepos, repos, CacheTTL.GitHub);
         return repos;
     }
 
-    private async Task<GitHubActivity> ComputeActivityAsync(List<GitHubRepo> repos)
+    private async Task<GitHubRepo> CreateRepoModelAsync(Repository repo)
     {
-        // Use events API for recent commit activity
-        var response = await httpClient.GetAsync(
-            $"https://api.github.com/users/{_username}/events?per_page=100");
+        var topics = await GetTopicsAsync(repo);
+        return new GitHubRepo(
+            Name: repo.Name,
+            Description: repo.Description,
+            Url: repo.HtmlUrl,
+            Language: repo.Language,
+            Stars: repo.StargazersCount,
+            Forks: repo.ForksCount,
+            IsForked: repo.Fork,
+            UpdatedAt: repo.UpdatedAt.UtcDateTime,
+            Topics: topics
+        );
+    }
 
-        var events = new List<(DateTime Date, int Count)>();
-        int commitsThisWeek = 0;
-        int commitsThisMonth = 0;
-        int totalThisYear = 0;
+    private async Task<List<string>> GetTopicsAsync(Repository repo)
+    {
+        if (repo.Topics is not null && repo.Topics.Any())
+            return repo.Topics.ToList();
+
+        try
+        {
+            var topics = await _client.Repository.GetAllTopics(_username, repo.Name);
+            return topics.Names.ToList();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Unable to load topics for repo {RepoName}", repo.Name);
+            return new List<string>();
+        }
+    }
+
+    private async Task<GitHubActivity> ComputeActivityAsync()
+    {
+        var events = await _client.Activity.Events.GetAllUserPerformedPublic(_username, new ApiOptions
+        {
+            PageSize = 100,
+            PageCount = 1,
+            StartPage = 1
+        });
 
         var now = DateTime.UtcNow;
         var weekAgo = now.AddDays(-7);
         var monthAgo = now.AddMonths(-1);
         var yearStart = new DateTime(now.Year, 1, 1);
 
-        if (response.IsSuccessStatusCode)
-        {
-            using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
-
-            foreach (var ev in doc.RootElement.EnumerateArray())
+        var eventData = events
+            .Where(e => string.Equals(e.Type, "PushEvent", StringComparison.OrdinalIgnoreCase))
+            .Select(e =>
             {
-                if (ev.GetProperty("type").GetString() != "PushEvent") continue;
+                var payload = e.Payload as PushEventPayload;
+                return new
+                {
+                    Date = e.CreatedAt.UtcDateTime,
+                    Commits = payload?.Commits?.Count ?? 0
+                };
+            })
+            .ToList();
 
-                var createdAt = ev.GetProperty("created_at").GetDateTime();
-                var commitCount = 0;
+        var commitsThisWeek = eventData.Where(e => e.Date >= weekAgo).Sum(e => e.Commits);
+        var commitsThisMonth = eventData.Where(e => e.Date >= monthAgo).Sum(e => e.Commits);
+        var totalThisYear = eventData.Where(e => e.Date >= yearStart).Sum(e => e.Commits);
 
-                if (ev.TryGetProperty("payload", out var payload) &&
-                    payload.TryGetProperty("commits", out var commits))
-                    commitCount = commits.GetArrayLength();
+        var contributionsByDate = eventData
+            .GroupBy(e => DateOnly.FromDateTime(e.Date))
+            .ToDictionary(g => g.Key, g => g.Sum(e => e.Commits));
 
-                if (createdAt >= yearStart) totalThisYear += commitCount;
-                if (createdAt >= monthAgo) commitsThisMonth += commitCount;
-                if (createdAt >= weekAgo) commitsThisWeek += commitCount;
-
-                events.Add((createdAt, commitCount));
-            }
-        }
-
-        // Build recent 30-day contributions
         var recentContributions = Enumerable.Range(0, 30)
             .Select(i => DateOnly.FromDateTime(now.AddDays(-i)))
             .Select(date => new DailyContribution(
                 date,
-                events.Where(e => DateOnly.FromDateTime(e.Date) == date).Sum(e => e.Count)))
+                contributionsByDate.TryGetValue(date, out var count) ? count : 0))
             .OrderBy(d => d.Date)
             .ToList();
 
-        // Simple streak calc from recentContributions (reversed = most recent first)
-        var streak = 0;
+        var longestStreak = 0;
+        var currentStreak = 0;
+
         foreach (var day in recentContributions.OrderByDescending(d => d.Date))
         {
-            if (day.Count > 0) streak++;
-            else break;
+            if (day.Count > 0)
+            {
+                currentStreak++;
+                longestStreak = Math.Max(longestStreak, currentStreak);
+            }
+            else
+            {
+                break;
+            }
         }
 
         return new GitHubActivity(
             TotalCommitsThisYear: totalThisYear,
             CommitsThisWeek: commitsThisWeek,
             CommitsThisMonth: commitsThisMonth,
-            CurrentStreak: streak,
-            LongestStreak: streak, // simplified — events API only goes back 90 days
+            CurrentStreak: currentStreak,
+            LongestStreak: longestStreak,
             RecentContributions: recentContributions
         );
     }
 
     private async Task<LanguageBreakdown> FetchLanguagesAsync(List<GitHubRepo> repos)
     {
-        var totalBytes = new Dictionary<string, int>();
-
-        // Fetch languages for top 10 non-forked repos to avoid rate limiting
+        var totalBytes = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var targetRepos = repos.Where(r => !r.IsForked).Take(10).ToList();
 
-        var tasks = targetRepos.Select(async repo =>
+        foreach (var repo in targetRepos)
         {
             try
             {
-                var res = await httpClient.GetAsync(
-                    $"https://api.github.com/repos/{_username}/{repo.Name}/languages");
-                if (!res.IsSuccessStatusCode) return;
-
-                using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync());
-                foreach (var lang in doc.RootElement.EnumerateObject())
+                var languages = await _client.Repository.GetAllLanguages(_username, repo.Name);
+                foreach (var language in languages)
                 {
-                    var bytes = lang.Value.GetInt32();
-                    lock (totalBytes)
-                    {
-                        totalBytes.TryAdd(lang.Name, 0);
-                        totalBytes[lang.Name] += bytes;
-                    }
+                    totalBytes.TryAdd(language.Name, 0);
+                    totalBytes[language.Name] += (int)language.NumberOfBytes;
                 }
             }
             catch (Exception ex)
             {
-                logger.LogWarning("Failed to fetch languages for {Repo}: {Ex}", repo.Name, ex.Message);
+                _logger.LogWarning(ex, "Failed to fetch languages for {RepoName}", repo.Name);
             }
-        });
-
-        await Task.WhenAll(tasks);
+        }
 
         var grandTotal = totalBytes.Values.Sum();
         var percentages = totalBytes
