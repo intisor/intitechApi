@@ -35,6 +35,7 @@ public class GitHubService
         var repos = await FetchReposAsync();
         var activity = await ComputeActivityAsync();
         var languages = await FetchLanguagesAsync(repos);
+        var latestHash = await FetchLatestHashAsync(repos);
 
         var topRepos = repos
             .Where(r => !r.IsForked)
@@ -48,7 +49,7 @@ public class GitHubService
             .OrderByDescending(r => r.UpdatedAt)
             .ToList();
 
-        var summary = new GitHubSummary(profile, topRepos, portfolioRepos, activity, languages, DateTime.UtcNow);
+        var summary = new GitHubSummary(profile, topRepos, portfolioRepos, activity, languages, latestHash, DateTime.UtcNow);
 
         _cache.Set(CacheKeys.GitHubSummary, summary, CacheTTL.GitHub);
         return summary;
@@ -258,5 +259,23 @@ public class GitHubService
                 kv => grandTotal > 0 ? Math.Round((double)kv.Value / grandTotal * 100, 1) : 0);
 
         return new LanguageBreakdown(percentages, totalBytes);
+    }
+
+    private async Task<string> FetchLatestHashAsync(List<GitHubRepo> repos)
+    {
+        try
+        {
+            var mostRecentRepo = repos.OrderByDescending(r => r.UpdatedAt).FirstOrDefault();
+            if (mostRecentRepo == null) return "STABLE";
+
+            var commits = await _client.Repository.Commit.GetAll(_username, mostRecentRepo.Name, new ApiOptions { PageSize = 1, PageCount = 1 });
+            var lastCommit = commits.FirstOrDefault();
+            
+            return lastCommit?.Sha.Substring(0, 7).ToUpper() ?? "STABLE";
+        }
+        catch
+        {
+            return "STABLE";
+        }
     }
 }

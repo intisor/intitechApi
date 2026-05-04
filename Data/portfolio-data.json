@@ -5,7 +5,8 @@
     "careerGoal": "Become a highly skilled C# engineer building fast, resource-efficient systems. Not just writing code — engineering things that endure.",
     "affiliations": "Microsoft Learn Student Ambassador. Assistant General Secretary, AMSA Nigeria. Writer — at the intersection of technology, philosophy, and the Nigerian condition.",
     "location": "Akure, Nigeria",
-    "status": "Available for freelance"
+    "status": "Available for freelance",
+    "subtag": "PATTERN RECOGNITION FROM PROXIMITY · AKURE, NIGERIA"
   },
   "skills": [
     { "name": "C#", "tier": 1 },

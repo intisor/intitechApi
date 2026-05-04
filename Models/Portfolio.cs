@@ -15,7 +15,8 @@ public record AboutInfo(
     string CareerGoal,
     string Affiliations,
     string Location,
-    string Status
+    string Status,
+    string Subtag
 );
 
 public record SkillInfo(

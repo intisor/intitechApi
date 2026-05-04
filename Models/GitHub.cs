@@ -6,6 +6,7 @@ public record GitHubSummary(
     List<GitHubRepo> PortfolioRepos,
     GitHubActivity Activity,
     LanguageBreakdown Languages,
+    string LatestHash,
     DateTime CachedAt
 );
 
