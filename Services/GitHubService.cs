@@ -32,25 +32,25 @@ public class GitHubService
             return cached;
 
         var profile = await FetchProfileAsync();
-        var repos = await FetchReposAsync();
+        var allRepos = await FetchReposAsync();
         var activity = await ComputeActivityAsync();
-        var languages = await FetchLanguagesAsync(repos);
-        var latestHash = await FetchLatestHashAsync(repos);
+        var languages = await FetchLanguagesAsync(allRepos);
+        var latestHash = await FetchLatestHashAsync(allRepos);
 
-        var topRepos = repos
+        var topRepos = allRepos
             .Where(r => !r.IsForked)
             .OrderByDescending(r => r.Stars)
             .ThenByDescending(r => r.UpdatedAt)
             .Take(6)
             .ToList();
 
-        var portfolioRepos = repos
+        var portfolioRepos = allRepos
             .Where(r => r.Topics.Contains("portfolio", StringComparer.OrdinalIgnoreCase))
             .OrderByDescending(r => r.UpdatedAt)
             .ToList();
 
         var summary = new GitHubSummary(
-            profile with { PublicRepos = repos.Count }, // Update count to include private
+            profile with { PublicRepos = allRepos.Count }, // Update count to include private
             topRepos, 
             portfolioRepos, 
             activity, 
@@ -116,11 +116,11 @@ public class GitHubService
         if (_cache.TryGetValue(CacheKeys.GitHubRepos, out List<GitHubRepo>? cachedRepos) && cachedRepos is not null)
             return cachedRepos;
 
-        var octokitRepos = await _client.Repository.GetAllForCurrent(new ApiOptions
+        var octokitRepos = await _client.Repository.GetAllForCurrent(new RepositoryRequest
         {
-            PageSize = 100,
-            PageCount = 10,
-            StartPage = 1
+            Type = RepositoryType.Owner,
+            Sort = RepositorySort.Updated,
+            Direction = SortDirection.Descending
         });
 
         var repos = new List<GitHubRepo>(octokitRepos.Count);
