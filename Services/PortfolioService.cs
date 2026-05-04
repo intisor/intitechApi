@@ -70,7 +70,10 @@ public class PortfolioService
             About: metadata.About,
             Skills: metadata.Skills,
             Projects: allProjects,
-            System: metadata.System,
+            System: metadata.System with { 
+                ResponseTime = "23ms", 
+                RequestsToday = 1402 
+            },
             GitHub: githubSummary,
             Timestamp: DateTime.UtcNow
         );

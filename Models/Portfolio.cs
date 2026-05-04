@@ -39,5 +39,7 @@ public record ProjectInfo(
 public record SystemInfo(
     string Uptime,
     string Version,
-    string Build
+    string Build,
+    string ResponseTime,
+    int RequestsToday
 );
