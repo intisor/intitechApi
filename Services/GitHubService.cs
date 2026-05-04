@@ -49,7 +49,15 @@ public class GitHubService
             .OrderByDescending(r => r.UpdatedAt)
             .ToList();
 
-        var summary = new GitHubSummary(profile, topRepos, portfolioRepos, activity, languages, latestHash, DateTime.UtcNow);
+        var summary = new GitHubSummary(
+            profile with { PublicRepos = repos.Count }, // Update count to include private
+            topRepos, 
+            portfolioRepos, 
+            activity, 
+            languages, 
+            latestHash, 
+            DateTime.UtcNow
+        );
 
         _cache.Set(CacheKeys.GitHubSummary, summary, CacheTTL.GitHub);
         return summary;
@@ -108,7 +116,7 @@ public class GitHubService
         if (_cache.TryGetValue(CacheKeys.GitHubRepos, out List<GitHubRepo>? cachedRepos) && cachedRepos is not null)
             return cachedRepos;
 
-        var octokitRepos = await _client.Repository.GetAllForUser(_username, new ApiOptions
+        var octokitRepos = await _client.Repository.GetAllForCurrent(new ApiOptions
         {
             PageSize = 100,
             PageCount = 10,
