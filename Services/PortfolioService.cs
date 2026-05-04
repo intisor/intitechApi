@@ -7,23 +7,41 @@ public class PortfolioService
     private readonly GitHubService _github;
     private readonly MetadataService _metadata;
     private readonly WakaTimeService _wakatime;
+    private readonly IMemoryCache _cache;
 
-    public PortfolioService(GitHubService github, MetadataService metadata, WakaTimeService wakatime)
+    public PortfolioService(GitHubService github, MetadataService metadata, WakaTimeService wakatime, IMemoryCache cache)
     {
         _github = github;
         _metadata = metadata;
         _wakatime = wakatime;
+        _cache = cache;
     }
+
+    private const string SummaryCacheKey = "FullPortfolioSummary";
 
     public async Task<PortfolioSummary?> GetSummaryAsync()
     {
-        var githubSummary = await _github.GetSummaryAsync();
-        var metadata = await _metadata.GetMetadataAsync();
-        var wakaStats = await _wakatime.GetProjectStatsAsync();
+        // 1. Try to get from cache first for instant response
+        if (_cache.TryGetValue(SummaryCacheKey, out PortfolioSummary? cached))
+        {
+            // Optional: You could trigger a background refresh here
+            return cached;
+        }
+
+        // 2. Fetch all sources IN PARALLEL
+        var githubTask = _github.GetSummaryAsync();
+        var metadataTask = _metadata.GetMetadataAsync();
+        var wakaStatsTask = _wakatime.GetProjectStatsAsync();
+
+        await Task.WhenAll(githubTask, metadataTask, wakaStatsTask);
+
+        var githubSummary = await githubTask;
+        var metadata = await metadataTask;
+        var wakaStats = await wakaStatsTask;
 
         if (metadata is null) return null;
 
-        // Merge Manual Projects with GitHub Projects
+        // 3. Merge data
         var allProjects = new List<ProjectInfo>();
         
         foreach (var mp in metadata.ManualProjects)
@@ -47,7 +65,7 @@ public class PortfolioService
             ));
         }
 
-        return new PortfolioSummary(
+        var summary = new PortfolioSummary(
             About: metadata.About,
             Skills: metadata.Skills,
             Projects: allProjects,
@@ -55,5 +73,10 @@ public class PortfolioService
             GitHub: githubSummary,
             Timestamp: DateTime.UtcNow
         );
+
+        // 4. Cache the result for 30 minutes
+        _cache.Set(SummaryCacheKey, summary, TimeSpan.FromMinutes(30));
+
+        return summary;
     }
 }
