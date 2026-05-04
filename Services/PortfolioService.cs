@@ -71,8 +71,8 @@ public class PortfolioService
             Skills: metadata.Skills,
             Projects: allProjects,
             System: metadata.System with { 
-                ResponseTime = "23ms", 
-                RequestsToday = 1402 
+                ResponseTime = "--", 
+                RequestsToday = 0 
             },
             GitHub: githubSummary,
             Timestamp: DateTime.UtcNow
