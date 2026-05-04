@@ -5,6 +5,9 @@ var builder = WebApplication.CreateBuilder(args);
 // Services
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<GitHubService>();
+builder.Services.AddSingleton<MetadataService>();
+builder.Services.AddHttpClient<WakaTimeService>();
+builder.Services.AddSingleton<PortfolioService>();
 builder.Services.AddOpenApi();
 
 // CORS — only allow portfolio origin
@@ -153,6 +156,23 @@ app.MapGet("/github/languages", async (GitHubService github) =>
     {
         return Results.Problem(
             title: "Failed to fetch GitHub language data",
+            detail: ex.Message,
+            statusCode: 502);
+    }
+});
+
+// ── Portfolio ─────────────────────────────────────────────────────────────────
+app.MapGet("/portfolio/summary", async (PortfolioService portfolio) =>
+{
+    try
+    {
+        var summary = await portfolio.GetSummaryAsync();
+        return summary is not null ? Results.Ok(summary) : Results.NotFound(new { message = "Portfolio metadata not found." });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(
+            title: "Failed to fetch portfolio summary",
             detail: ex.Message,
             statusCode: 502);
     }

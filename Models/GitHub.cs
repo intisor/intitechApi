@@ -3,6 +3,7 @@ namespace IntitechApi.Models;
 public record GitHubSummary(
     GitHubProfile Profile,
     List<GitHubRepo> TopRepos,
+    List<GitHubRepo> PortfolioRepos,
     GitHubActivity Activity,
     LanguageBreakdown Languages,
     DateTime CachedAt

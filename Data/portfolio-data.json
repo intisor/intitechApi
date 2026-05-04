@@ -1,0 +1,58 @@
+{
+  "about": {
+    "opening": "Most developers build for markets.\r\nI build from proximity.",
+    "bio": "Final-year Software Engineering student at FUTA — with real systems already in production. Self-taught before formal education. Building from first principles, for real problems.",
+    "careerGoal": "Become a highly skilled C# engineer building fast, resource-efficient systems. Not just writing code — engineering things that endure.",
+    "affiliations": "Microsoft Learn Student Ambassador. Assistant General Secretary, AMSA Nigeria. Writer — at the intersection of technology, philosophy, and the Nigerian condition.",
+    "location": "Akure, Nigeria",
+    "status": "Available for freelance"
+  },
+  "skills": [
+    { "name": "C#", "tier": 1 },
+    { "name": "ASP.NET Core", "tier": 1 },
+    { "name": "EF Core", "tier": 1 },
+    { "name": "SQL Server", "tier": 1 },
+    { "name": "REST API", "tier": 2 },
+    { "name": "Clean Architecture", "tier": 2 },
+    { "name": "SignalR", "tier": 2 },
+    { "name": "Hangfire", "tier": 2 },
+    { "name": "React", "tier": 3 },
+    { "name": "Blazor", "tier": 3 },
+    { "name": "WebRTC", "tier": 3 },
+    { "name": "Chrome MV3", "tier": 3 }
+  ],
+  "manualProjects": [
+    {
+      "id": "amsa-reporting",
+      "name": "AMSA Reporting System",
+      "tagline": "01 · REPORTING SYSTEM",
+      "description": "Digitised monthly activity reporting for AMSA Nigeria. National → State → Unit hierarchy with full report state machine and JWT role auth.",
+      "stack": ["Blazor Server", "SQL Server", "EF Core", "JWT"],
+      "metrics": "↗ Multi-tenant · Role-based access",
+      "link": "https://amsa.intitech.dev"
+    },
+    {
+      "id": "finsight",
+      "name": "FinSight",
+      "tagline": "02 · FINANCIAL DATA",
+      "description": "B2B financial data layer for Nigerian SMEs — bypassing absent bank APIs via OAuth email parsing and background PDF ingestion.",
+      "stack": ["ASP.NET Core", "Hangfire", "PdfPig", "OAuth"],
+      "metrics": "↗ Gmail/Outlook OAuth · Background workers",
+      "link": "https://finsight.intitech.dev"
+    },
+    {
+      "id": "intikasala",
+      "name": "Inti.Kasala",
+      "tagline": "03 · LOAD TESTING",
+      "description": "Pluggable ASP.NET load and stress testing framework. Claude AI engine for analysis. Real-time results streamed via SignalR.",
+      "stack": ["ASP.NET Core", "SignalR", "React", "Claude API"],
+      "metrics": "↗ AI-powered · Real-time streaming",
+      "link": "https://kasala.intitech.dev"
+    }
+  ],
+  "system": {
+    "uptime": "99.9%",
+    "version": "2.4.0-STABLE",
+    "build": "ARCHAIC_ARCH_v2"
+  }
+}

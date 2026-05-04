@@ -43,7 +43,12 @@ public class GitHubService
             .Take(6)
             .ToList();
 
-        var summary = new GitHubSummary(profile, topRepos, activity, languages, DateTime.UtcNow);
+        var portfolioRepos = repos
+            .Where(r => r.Topics.Contains("portfolio", StringComparer.OrdinalIgnoreCase))
+            .OrderByDescending(r => r.UpdatedAt)
+            .ToList();
+
+        var summary = new GitHubSummary(profile, topRepos, portfolioRepos, activity, languages, DateTime.UtcNow);
 
         _cache.Set(CacheKeys.GitHubSummary, summary, CacheTTL.GitHub);
         return summary;
