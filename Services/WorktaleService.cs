@@ -65,8 +65,7 @@ internal sealed record ProviderConfig(
     string Name,
     string BaseUrl,
     string Model,
-    string? ApiKey,
-    bool RequiresApiKey
+    string? ApiKey
 );
 
 public class WorktaleStore
@@ -275,14 +274,6 @@ public class WorktaleQueue
 
 public class FreeAiNarrativeService
 {
-    private static readonly Dictionary<string, (string baseUrl, string model, string keyPath)> Presets = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["openrouter"] = ("https://openrouter.ai/api/v1", "meta-llama/llama-3.3-8b-instruct:free", "AI:OpenRouterApiKey"),
-        ["groq"] = ("https://api.groq.com/openai/v1", "llama-3.1-8b-instant", "AI:GroqApiKey"),
-        ["mistral"] = ("https://api.mistral.ai/v1", "mistral-small-latest", "AI:MistralApiKey"),
-        ["cerebras"] = ("https://api.cerebras.ai/v1", "llama-3.3-70b", "AI:CerebrasApiKey"),
-    };
-
     private readonly HttpClient _http;
     private readonly IConfiguration _cfg;
     private readonly ILogger<FreeAiNarrativeService> _log;
@@ -364,7 +355,7 @@ Write 2-3 sentences, first person, past tense. Max 60 words. Be specific about w
 
     private async Task<(bool success, string? narrative, string? error)> TryProviderAsync(ProviderConfig p, string prompt, CancellationToken ct)
     {
-        if (p.RequiresApiKey && string.IsNullOrWhiteSpace(p.ApiKey))
+        if (string.IsNullOrWhiteSpace(p.ApiKey))
             return (false, null, "Missing API key");
 
         var endpoint = p.BaseUrl.TrimEnd('/');
@@ -439,45 +430,28 @@ Write 2-3 sentences, first person, past tense. Max 60 words. Be specific about w
     private List<ProviderConfig> BuildProviderChain()
     {
         var result = new List<ProviderConfig>();
-        var primary = _cfg["AI:Provider"] ?? "openrouter";
-        var fallbacks = _cfg["AI:Fallbacks"];
+        var section = _cfg.GetSection("AiProviders");
 
-        if (LoadProvider(primary, true) is { } p)
-            result.Add(p);
+        if (!section.Exists())
+            return result;
 
-        if (!string.IsNullOrWhiteSpace(fallbacks))
+        foreach (var child in section.GetChildren())
         {
-            foreach (var name in fallbacks.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            var name = child.Key;
+            var baseUrl = child["BaseUrl"];
+            var model = child["Model"];
+            var apiKey = child["ApiKey"];
+
+            if (string.IsNullOrWhiteSpace(baseUrl) || string.IsNullOrWhiteSpace(model))
             {
-                if (name != primary && LoadProvider(name, false) is { } p2)
-                    result.Add(p2);
+                _log.LogWarning("Incomplete provider config: {N}", name);
+                continue;
             }
+
+            result.Add(new(name, baseUrl, model, apiKey));
         }
 
         return result;
-    }
-
-    private ProviderConfig? LoadProvider(string name, bool usePrimaryOverrides)
-    {
-        if (!Presets.TryGetValue(name, out var preset))
-        {
-            _log.LogWarning("Unknown provider: {N}", name);
-            return null;
-        }
-
-        var (baseUrl, model, keyPath) = preset;
-
-        if (usePrimaryOverrides)
-        {
-            baseUrl = _cfg["AI:BaseUrl"] ?? baseUrl;
-            model = _cfg["AI:Model"] ?? model;
-        }
-
-        var key = _cfg["AI:ApiKey"] ?? _cfg[keyPath];
-        if (string.IsNullOrWhiteSpace(baseUrl) || string.IsNullOrWhiteSpace(model))
-            return null;
-
-        return new(name, baseUrl, model, key, !string.IsNullOrWhiteSpace(key));
     }
 
     private static WorktaleNarrativeResult Fallback(string reason) =>
