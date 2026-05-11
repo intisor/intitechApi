@@ -8,13 +8,14 @@ builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<GitHubService>();
 builder.Services.AddSingleton<MetadataService>();
 builder.Services.AddHttpClient<WakaTimeService>();
+builder.Services.AddSingleton<ProviderCooldownStore>();
 builder.Services.AddHttpClient<FreeAiNarrativeService>(client =>
 {
     client.Timeout = TimeSpan.FromSeconds(25);
 });
 builder.Services.AddSingleton<PortfolioService>();
-builder.Services.AddSingleton<IWorktaleStore, WorktaleStore>();
-builder.Services.AddSingleton<IWorktaleQueue, WorktaleQueue>();
+builder.Services.AddSingleton<WorktaleStore>();
+builder.Services.AddSingleton<WorktaleQueue>();
 builder.Services.AddHostedService<WorktaleNarrativeWorker>();
 builder.Services.AddOpenApi();
 
@@ -190,8 +191,8 @@ app.MapGet("/portfolio/summary", async (PortfolioService portfolio) =>
 app.MapPost("/api/worktale/ingest", async (
     HttpContext context,
     WorktaleIngestRequest request,
-    IWorktaleStore store,
-    IWorktaleQueue queue,
+    WorktaleStore store,
+    WorktaleQueue queue,
     IConfiguration config,
     CancellationToken cancellationToken) =>
 {
@@ -218,13 +219,13 @@ app.MapPost("/api/worktale/ingest", async (
     });
 });
 
-app.MapGet("/api/changelog", async (IWorktaleStore store, CancellationToken cancellationToken) =>
+app.MapGet("/api/changelog", async (WorktaleStore store, CancellationToken cancellationToken) =>
 {
     var entries = await store.GetAllAsync(cancellationToken);
     return Results.Ok(entries);
 });
 
-app.MapGet("/api/changelog/{id}", async (string id, IWorktaleStore store, CancellationToken cancellationToken) =>
+app.MapGet("/api/changelog/{id}", async (string id, WorktaleStore store, CancellationToken cancellationToken) =>
 {
     var entry = await store.GetByIdAsync(id, cancellationToken);
     return entry is null ? Results.NotFound(new { message = "Changelog entry not found." }) : Results.Ok(entry);
@@ -233,7 +234,7 @@ app.MapGet("/api/changelog/{id}", async (string id, IWorktaleStore store, Cancel
 app.MapPost("/api/changelog/milestone", async (
     HttpContext context,
     ChangelogMilestoneRequest request,
-    IWorktaleStore store,
+    WorktaleStore store,
     IConfiguration config,
     CancellationToken cancellationToken) =>
 {
