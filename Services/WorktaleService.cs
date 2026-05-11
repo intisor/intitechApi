@@ -275,12 +275,12 @@ public class WorktaleQueue
 
 public class FreeAiNarrativeService
 {
-    private static readonly Dictionary<string, (string baseUrl, string model, string keyEnv)> Presets = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly Dictionary<string, (string baseUrl, string model, string keyPath)> Presets = new(StringComparer.OrdinalIgnoreCase)
     {
-        ["openrouter"] = ("https://openrouter.ai/api/v1", "meta-llama/llama-3.3-8b-instruct:free", "OPENROUTER_API_KEY"),
-        ["groq"] = ("https://api.groq.com/openai/v1", "llama-3.1-8b-instant", "GROQ_API_KEY"),
-        ["mistral"] = ("https://api.mistral.ai/v1", "mistral-small-latest", "MISTRAL_API_KEY"),
-        ["cerebras"] = ("https://api.cerebras.ai/v1", "llama-3.3-70b", "CEREBRAS_API_KEY"),
+        ["openrouter"] = ("https://openrouter.ai/api/v1", "meta-llama/llama-3.3-8b-instruct:free", "AI:OpenRouterApiKey"),
+        ["groq"] = ("https://api.groq.com/openai/v1", "llama-3.1-8b-instant", "AI:GroqApiKey"),
+        ["mistral"] = ("https://api.mistral.ai/v1", "mistral-small-latest", "AI:MistralApiKey"),
+        ["cerebras"] = ("https://api.cerebras.ai/v1", "llama-3.3-70b", "AI:CerebrasApiKey"),
     };
 
     private readonly HttpClient _http;
@@ -439,8 +439,8 @@ Write 2-3 sentences, first person, past tense. Max 60 words. Be specific about w
     private List<ProviderConfig> BuildProviderChain()
     {
         var result = new List<ProviderConfig>();
-        var primary = _cfg["AI_PROVIDER"] ?? "openrouter";
-        var fallbacks = _cfg["AI_FALLBACKS"];
+        var primary = _cfg["AI:Provider"] ?? "openrouter";
+        var fallbacks = _cfg["AI:Fallbacks"];
 
         if (LoadProvider(primary, true) is { } p)
             result.Add(p);
@@ -465,15 +465,15 @@ Write 2-3 sentences, first person, past tense. Max 60 words. Be specific about w
             return null;
         }
 
-        var (baseUrl, model, keyEnv) = preset;
+        var (baseUrl, model, keyPath) = preset;
 
         if (usePrimaryOverrides)
         {
-            baseUrl = _cfg["AI_BASE_URL"] ?? baseUrl;
-            model = _cfg["AI_MODEL"] ?? model;
+            baseUrl = _cfg["AI:BaseUrl"] ?? baseUrl;
+            model = _cfg["AI:Model"] ?? model;
         }
 
-        var key = _cfg["AI_API_KEY"] ?? _cfg[keyEnv];
+        var key = _cfg["AI:ApiKey"] ?? _cfg[keyPath];
         if (string.IsNullOrWhiteSpace(baseUrl) || string.IsNullOrWhiteSpace(model))
             return null;
 
