@@ -3,6 +3,8 @@ using System.Diagnostics;
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Channels;
 using IntitechApi.Models;
 
 namespace IntitechApi.Services;
@@ -22,6 +24,225 @@ internal sealed record ProviderConfig(
     string? ApiKey,
     bool RequiresApiKey
 );
+
+public interface IWorktaleStore
+{
+    Task<ChangelogEntry> AddCommitAsync(WorktaleIngestRequest request, CancellationToken cancellationToken);
+    Task<ChangelogEntry> AddMilestoneAsync(ChangelogMilestoneRequest request, CancellationToken cancellationToken);
+    Task<List<ChangelogEntry>> GetAllAsync(CancellationToken cancellationToken);
+    Task<ChangelogEntry?> GetByIdAsync(string id, CancellationToken cancellationToken);
+    Task<bool> UpdateNarrativeAsync(string id, string narrative, bool isFallback, string? error, CancellationToken cancellationToken);
+}
+
+public class WorktaleStore : IWorktaleStore
+{
+    private readonly string _storePath;
+    private readonly SemaphoreSlim _writeGate = new(1, 1);
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        WriteIndented = true
+    };
+
+    public WorktaleStore(IWebHostEnvironment env)
+    {
+        _storePath = Path.Combine(env.ContentRootPath, "Data", "worktale-changelog.json");
+    }
+
+    public async Task<ChangelogEntry> AddCommitAsync(WorktaleIngestRequest request, CancellationToken cancellationToken)
+    {
+        var timestamp = request.Timestamp?.ToUniversalTime() ?? DateTime.UtcNow;
+        var now = DateTime.UtcNow;
+        var hashPrefix = string.IsNullOrWhiteSpace(request.Hash)
+            ? "unknown"
+            : request.Hash[..Math.Min(request.Hash.Length, 12)].ToLowerInvariant();
+
+        var entry = new ChangelogEntry(
+            Id: $"{hashPrefix}-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}",
+            Type: "commit",
+            Repo: request.Repo.Trim(),
+            Title: request.Message.Trim(),
+            Description: null,
+            Hash: request.Hash.Trim(),
+            FilesChanged: ParseFilesChanged(request.FilesChanged),
+            LinesAdded: Math.Max(0, request.LinesAdded),
+            LinesRemoved: Math.Max(0, request.LinesRemoved),
+            Timestamp: timestamp,
+            Status: "pending",
+            Narrative: null,
+            NarrativeError: null,
+            CreatedAt: now,
+            UpdatedAt: now
+        );
+
+        await _writeGate.WaitAsync(cancellationToken);
+        try
+        {
+            var entries = await ReadAllUnsafeAsync(cancellationToken);
+            entries.Add(entry);
+            await WriteAllUnsafeAsync(entries, cancellationToken);
+        }
+        finally
+        {
+            _writeGate.Release();
+        }
+
+        return entry;
+    }
+
+    public async Task<ChangelogEntry> AddMilestoneAsync(ChangelogMilestoneRequest request, CancellationToken cancellationToken)
+    {
+        var now = DateTime.UtcNow;
+        var timestamp = request.Timestamp?.ToUniversalTime() ?? now;
+
+        var entry = new ChangelogEntry(
+            Id: $"milestone-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}",
+            Type: "milestone",
+            Repo: string.IsNullOrWhiteSpace(request.Repo) ? "general" : request.Repo.Trim(),
+            Title: request.Title.Trim(),
+            Description: request.Description.Trim(),
+            Hash: null,
+            FilesChanged: new List<string>(),
+            LinesAdded: 0,
+            LinesRemoved: 0,
+            Timestamp: timestamp,
+            Status: "complete",
+            Narrative: request.Description.Trim(),
+            NarrativeError: null,
+            CreatedAt: now,
+            UpdatedAt: now
+        );
+
+        await _writeGate.WaitAsync(cancellationToken);
+        try
+        {
+            var entries = await ReadAllUnsafeAsync(cancellationToken);
+            entries.Add(entry);
+            await WriteAllUnsafeAsync(entries, cancellationToken);
+        }
+        finally
+        {
+            _writeGate.Release();
+        }
+
+        return entry;
+    }
+
+    public async Task<List<ChangelogEntry>> GetAllAsync(CancellationToken cancellationToken)
+    {
+        await _writeGate.WaitAsync(cancellationToken);
+        try
+        {
+            var entries = await ReadAllUnsafeAsync(cancellationToken);
+            return entries
+                .OrderByDescending(e => e.Timestamp)
+                .ThenByDescending(e => e.CreatedAt)
+                .ToList();
+        }
+        finally
+        {
+            _writeGate.Release();
+        }
+    }
+
+    public async Task<ChangelogEntry?> GetByIdAsync(string id, CancellationToken cancellationToken)
+    {
+        await _writeGate.WaitAsync(cancellationToken);
+        try
+        {
+            var entries = await ReadAllUnsafeAsync(cancellationToken);
+            return entries.FirstOrDefault(e => string.Equals(e.Id, id, StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            _writeGate.Release();
+        }
+    }
+
+    public async Task<bool> UpdateNarrativeAsync(string id, string narrative, bool isFallback, string? error, CancellationToken cancellationToken)
+    {
+        await _writeGate.WaitAsync(cancellationToken);
+        try
+        {
+            var entries = await ReadAllUnsafeAsync(cancellationToken);
+            var index = entries.FindIndex(e => string.Equals(e.Id, id, StringComparison.OrdinalIgnoreCase));
+            if (index < 0)
+            {
+                return false;
+            }
+
+            var existing = entries[index];
+            entries[index] = existing with
+            {
+                Narrative = narrative,
+                Status = isFallback ? "fallback" : "complete",
+                NarrativeError = error,
+                UpdatedAt = DateTime.UtcNow
+            };
+
+            await WriteAllUnsafeAsync(entries, cancellationToken);
+            return true;
+        }
+        finally
+        {
+            _writeGate.Release();
+        }
+    }
+
+    private async Task<List<ChangelogEntry>> ReadAllUnsafeAsync(CancellationToken cancellationToken)
+    {
+        if (!File.Exists(_storePath))
+        {
+            return new List<ChangelogEntry>();
+        }
+
+        await using var stream = File.OpenRead(_storePath);
+        var entries = await JsonSerializer.DeserializeAsync<List<ChangelogEntry>>(stream, JsonOptions, cancellationToken);
+        return entries ?? new List<ChangelogEntry>();
+    }
+
+    private async Task WriteAllUnsafeAsync(List<ChangelogEntry> entries, CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(_storePath)!);
+
+        await using var stream = File.Create(_storePath);
+        await JsonSerializer.SerializeAsync(stream, entries, JsonOptions, cancellationToken);
+    }
+
+    private static List<string> ParseFilesChanged(string? filesChanged)
+    {
+        if (string.IsNullOrWhiteSpace(filesChanged))
+        {
+            return new List<string>();
+        }
+
+        return filesChanged
+            .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+}
+
+public interface IWorktaleQueue
+{
+    ValueTask EnqueueAsync(string entryId, CancellationToken cancellationToken);
+    ValueTask<string> DequeueAsync(CancellationToken cancellationToken);
+}
+
+public class WorktaleQueue : IWorktaleQueue
+{
+    private readonly Channel<string> _channel = Channel.CreateUnbounded<string>(new UnboundedChannelOptions
+    {
+        SingleReader = true,
+        SingleWriter = false
+    });
+
+    public ValueTask EnqueueAsync(string entryId, CancellationToken cancellationToken) =>
+        _channel.Writer.WriteAsync(entryId, cancellationToken);
+
+    public ValueTask<string> DequeueAsync(CancellationToken cancellationToken) =>
+        _channel.Reader.ReadAsync(cancellationToken);
+}
 
 public class FreeAiNarrativeService
 {
@@ -493,5 +714,67 @@ No bullet points. Pure prose. Max 60 words.
         }
 
         return text[..maxLen] + "...";
+    }
+}
+
+public class WorktaleNarrativeWorker : BackgroundService
+{
+    private readonly IWorktaleQueue _queue;
+    private readonly IWorktaleStore _store;
+    private readonly FreeAiNarrativeService _narrativeService;
+    private readonly ILogger<WorktaleNarrativeWorker> _logger;
+
+    public WorktaleNarrativeWorker(
+        IWorktaleQueue queue,
+        IWorktaleStore store,
+        FreeAiNarrativeService narrativeService,
+        ILogger<WorktaleNarrativeWorker> logger)
+    {
+        _queue = queue;
+        _store = store;
+        _narrativeService = narrativeService;
+        _logger = logger;
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            string entryId;
+            try
+            {
+                entryId = await _queue.DequeueAsync(stoppingToken);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+
+            try
+            {
+                var entry = await _store.GetByIdAsync(entryId, stoppingToken);
+                if (entry is null)
+                {
+                    _logger.LogWarning("Queued entry {EntryId} was not found in store", entryId);
+                    continue;
+                }
+
+                if (!string.Equals(entry.Type, "commit", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var result = await _narrativeService.GenerateForCommitAsync(entry, stoppingToken);
+                await _store.UpdateNarrativeAsync(entryId, result.Narrative, result.IsFallback, result.Error, stoppingToken);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected worker failure while processing queued entry {EntryId}", entryId);
+            }
+        }
     }
 }

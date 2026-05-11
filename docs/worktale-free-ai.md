@@ -47,3 +47,59 @@ Health check parameters:
 - Free tiers and limits change frequently.
 - Verify each provider's latest free limits before production rollout.
 - Keep all secrets in environment variables or user secrets, never in source control.
+
+## Where to put API keys (explicit)
+
+Recommended (development): `dotnet user-secrets` (scoped to this project)
+
+Run from the project folder (PowerShell):
+
+- `dotnet user-secrets init`
+- `dotnet user-secrets set "Worktale:IngestApiKey" "<INGEST_KEY>"`
+- `dotnet user-secrets set "AI:Provider" "openrouter"`
+- `dotnet user-secrets set "AI:BaseUrl" "https://openrouter.ai/api/v1"`
+- `dotnet user-secrets set "AI:Model" "meta-llama/llama-3.3-8b-instruct:free"`
+- `dotnet user-secrets set "OPENROUTER_API_KEY" "<OPENROUTER_KEY>"`
+
+Environment variables (recommended for CI / production)
+
+PowerShell examples:
+
+- `$env:Worktale__IngestApiKey = 'your-ingest-key'`
+- `$env:AI__Provider = 'openrouter'`
+- `$env:AI__BaseUrl = 'https://openrouter.ai/api/v1'`
+- `$env:AI__Model = 'meta-llama/llama-3.3-8b-instruct:free'`
+- `$env:OPENROUTER_API_KEY = '<OPENROUTER_KEY>'`
+
+Linux / bash examples:
+
+- `export Worktale__IngestApiKey=your-ingest-key`
+- `export AI__Provider=openrouter`
+- `export AI__BaseUrl=https://openrouter.ai/api/v1`
+- `export AI__Model=meta-llama/llama-3.3-8b-instruct:free`
+- `export OPENROUTER_API_KEY=<OPENROUTER_KEY>`
+
+Appsettings (not recommended for secrets; shown for completeness)
+
+Add to `appsettings.Development.json` if you must (do not commit secrets):
+
+```
+{
+	"Worktale": {
+		"IngestApiKey": "dev-ingest-key"
+	},
+	"AI": {
+		"Provider": "openrouter",
+		"BaseUrl": "https://openrouter.ai/api/v1",
+		"Model": "meta-llama/llama-3.3-8b-instruct:free",
+		"ApiKey": "<PRIMARY_KEY>",
+		"Fallbacks": "groq,mistral"
+	}
+}
+```
+
+After setting keys, verify connectivity with the health endpoint (use `X-Api-Key`):
+
+- `curl -H "X-Api-Key: <INGEST_KEY>" "http://localhost:5057/api/worktale/ai/health?simulatePrimaryFailure=false"`
+
+If the probe succeeds you'll see `health-ok` from a provider; if it fails the response body will contain an error message describing which provider/key failed.
